@@ -1,0 +1,76 @@
+import PySimpleGUI as gui
+import json
+import subprocess as cmd
+from time import sleep as delay
+import os
+import constants
+
+def ask(text) {
+	layout = [
+		[gui.Text(text)],
+		[gui.Button('Yes'), gui.Button('No')]
+	]
+	gui.theme(constants.config['theme']); window = gui.Window("Confirmation:", layout)
+	while True {
+		e, v = window.read()
+		if e == "No" or e == gui.WIN_CLOSED {
+			window.close(); warning("Operation Cancelled", "No changes made."); return False
+		}
+		if e == "Yes" {
+			window.close(); return True
+		}
+	}
+}
+
+def warning(text, data) {
+	layout = [
+		[gui.Text(text, font=(20))],
+	]
+	if isinstance(data, cmd.CompletedProcess) {
+		stdout = data.stdout.decode(); stderr = data.stderr.decode()
+		if stdout != "" and stdout {
+			layout += [
+				[gui.Text("Output:")],
+				[gui.Multiline(default_text=stdout, size=(75,stdout.count('\n')+2))]
+			]
+		}
+		if stderr != "" and stderr {
+			layout += [
+				[gui.Text("Errors:")],
+				[gui.Multiline(default_text=stderr, size=(75,stderr.count('\n')+2))]
+			]
+		}
+	} else {
+		layout.append([gui.Text(data)])
+	}
+	layout.append([gui.Button('Ok')]); window = gui.Window("Warning:", layout, resizable=True)
+	while True {
+		e, v = window.read()
+		if e == "Ok" or e == gui.WIN_CLOSED {
+			window.close(); return
+		}
+	}
+}
+
+def while_container(container, path) {
+	while True {
+		delay(2)
+		command = [constants.config['runtime']]
+		if constants.config['runtime'] == "podman" {
+			if constants.config['--root']: command += ['--root', constants.config['--root']]
+			if constants.config['--runroot']: command += ['--runroot', constants.config['--runroot']]
+			if constants.config['--runtime']: command += ['--runtime', constants.config['--runtime']]
+		}
+		command += ["ps", "-q"]
+		if container not in cmd.check_output(command, text=True).split('\n'): break
+	}
+	for p in cmd.check_output(["ps", "aux"], text=True).split('\n') {
+		p = p.split()
+		if len(p) < 11: continue
+		if p[10] == "/usr/lib/xorg/Xorg" and p[11] == ":"+str(constants.config['new_X']) and p[12] == "vt"+str(constants.config['new_tty']) {
+			cmd.Popen(["kill", p[2]])
+		}
+	}
+	delay(1)
+	os.remove(path)
+}

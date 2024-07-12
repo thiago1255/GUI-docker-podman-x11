@@ -1,0 +1,506 @@
+from PySimpleGUI import *
+import PySimpleGUI as gui
+import json
+import subprocess as cmd
+from time import sleep as delay
+import os
+import constants
+import multiprocessing
+from utils import *
+
+# Standart configurations
+constants.config = dict([
+	('runtime', "podman"),
+	('theme', "Python"),
+	('--root', ""),
+	('--runroot', ""),
+	('--runtime', ""),
+	('images', []),
+	('default_X', 0),
+	('new_X', 1),
+	('default_tty', 7),
+	('new_tty', 1),
+	('script_name', "exec_me"),
+	('terminal', "gnome-terminal")
+])
+
+def save() {
+	with open(constants.config_file, 'w') as file {
+		if not ask("Save new configurations ?"): return False
+		json.dump(constants.config, file, indent='\t')
+		warning("New configurations saved !", " ")
+		return True
+	}
+}
+
+def runtime_config() {
+	layout = [
+		[Text("Container runtime:")],
+		[Radio("Docker", "CONFIG", default=constants.config['runtime']=="docker", key="docker")],
+		[Radio("Podman", "CONFIG", default=constants.config['runtime']=="podman", key="podman")],
+		[Button("Confirm"), Button("Cancell")]
+	]
+	window = Window('Runtime:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == gui.WIN_CLOSED or event == "Cancell" {
+			break
+		} elif event == "Confirm" {
+			old_runtime = constants.config['runtime']
+			constants.config['runtime'] = ("podman" if values['podman'] else ("docker" if values['docker'] else " "))
+			if save(): break
+			constants.config['runtime'] = old_runtime
+		}
+	}
+	window.close()
+}
+
+def x_config() {
+	old_config = constants.config.copy()
+	layout = [
+		[Text("Default X:", font=(22))],
+		[Input(default_text=str(old_config['default_X']), key="DEFAULTX")],
+		[Text('Default X display used, insert just the number.')],
+		[Text("New X:", font=(22))],
+		[Input(default_text=str(old_config['new_X']), key="NEWX")],
+		[Text('The number of the new X display to be created.')],
+		
+		[Text("Default TTY:", font=(22))],
+		[Input(default_text=str(old_config['default_tty']), key="DEFAULTT")],
+		[Text('Default TTY used by X (number only).')],
+		[Text("New TTY:", font=(22))],
+		[Input(default_text=str(old_config['new_tty']), key="NEWT")],
+		[Text('The new TTY to be used (insert number only).')],
+		
+		[Text("Script name:", font=(22))],
+		[Input(default_text=old_config['script_name'], key="SCRIPT")],
+		[Text('The name of the script to be runned on new tty.')],
+		
+		[Button("Confirm"), Button("Cancell")]
+	]
+	window = Window('Runtime:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == gui.WIN_CLOSED or event == "Cancell" {
+			break
+		} elif event == "Confirm" {
+			if not (values["DEFAULTX"].isdigit() and values["NEWX"].isdigit() and values["DEFAULTT"].isdigit() and values["NEWT"].isdigit()) {
+				warning("Error:", "A field that expect numbers received wrong input.")
+				continue
+			}
+			constants.config['default_X'] = int(values["DEFAULTX"])
+			constants.config['new_X'] = int(values["NEWX"])
+			constants.config['default_tty'] = int(values["DEFAULTT"])
+			constants.config['new_tty'] = int(values["NEWT"])
+			constants.config['script_name'] = values["SCRIPT"]
+			if save(): break
+			constants.config = old_config.copy()
+		}
+	}
+	window.close()
+}
+
+def theme_config() {
+	old_theme = constants.config['theme']
+	layout = [[Text("Select a theme:")]]; temp_line = []
+	for theme_name in gui.theme_list() {
+		temp_line.append(Button(theme_name))
+		if len(temp_line) == 9 {
+			layout.append(temp_line); temp_line = []
+		}
+	}
+	layout.append(temp_line)
+	del temp_line
+	window = Window('Themes:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == gui.WIN_CLOSED: break
+		if event is None: continue
+		constants.config['theme'] = event
+		theme(event)
+		if save(): break
+		constants.config['theme'] = old_theme
+		theme(old_theme)
+	}
+	window.close()
+}
+
+def podman_config() {
+	old_root = constants.config['--root']
+	old_runroot = constants.config['--runroot']
+	old_runtime = constants.config['--runtime']
+
+	layout = [
+		[Text("Folder For --root:", font=(22))],
+		[Input(default_text=old_root, key="ROOT")],
+		[Text("Folder used by podman to store data (including images).")],
+		[Text("Folder For --runroot:", font=(22))],
+		[Input(default_text=old_runroot, key="RUN")],
+		[Text("Folder used by podman to store data used on containers.")],
+		[Text("File for --runtime:", font=(22))],
+		[Input(default_text=old_runtime, key="RUNTIME")],
+		[Text("File used by podman as runtime.")],
+		[Button("Confirm"), Button("Cancell")]
+	]
+	
+	window = Window('Podman:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == gui.WIN_CLOSED or event == "Cancell": break
+		if event == "Confirm" {
+			constants.config['--root'] = values["ROOT"]
+			constants.config['--runroot'] = values["RUN"]
+			constants.config['--runtime'] = values["RUNTIME"]
+			if not save() {
+				constants.config['--root'] = old_root
+				constants.config['--runroot'] = old_runroot
+				constants.config['--runtime'] = old_runtime
+			}
+			break
+		}
+	}
+	window.close()
+}
+
+def terminal_config() {
+	old_terminal = constants.config['terminal']
+
+	layout = [
+		[Text("Terminal command:", font=(22))],
+		[Input(default_text=old_terminal, key="TERMINAL")],
+		[Text("Terminal simulator used when a terminal is required.")],
+		[Button("Confirm"), Button("Cancell")]
+	]
+	
+	window = Window('Terminal:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == gui.WIN_CLOSED or event == "Cancell": break
+		if event == "Confirm" {
+			constants.config['terminal'] = values['TERMINAL']
+			if save(): break
+			constants.config['terminal'] = old_terminal
+		}
+	}
+	window.close()
+}
+
+def configurations() {
+	layout = [
+		[Text("Runtime:"), Button(constants.config['runtime'], key="RUNTIME")],
+		[Text("Terminal:"),Button(constants.config['terminal'], key="TERMINAL")],
+		[Text("Theme:"), Button(constants.config['theme'], key="THEMES")],
+		[Button("X Screen Provider", key="XCONFIG")],
+		[Button('Delete "<none>" Images', key="NONEIMAGES")]
+	]
+	if constants.config['runtime'] == "podman" {
+		layout.append([Button("Standart Podman Arguments", key="PODMAN")])
+	}
+	layout.append([Text("Made by: thiago1255")])
+	window = Window('Configurations:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		match event {
+			case gui.WIN_CLOSED {
+				window.close(); return False
+			}
+			case "RUNTIME" {
+				runtime_config(); window.close(); return False
+			}
+			case "XCONFIG" {
+				x_config()
+			}
+			case "THEMES" {
+				theme_config(); window.close(); return True
+			}
+			case "NONEIMAGES" {
+				if ask("Delete from system, images named as <none> ? ") {
+					if constants.config['runtime'] == "docker" {
+						images = cmd.check_output(["docker", "images", "-f", "dangling=true", "-q"], text=True).split('\n')
+						data = cmd.run(["docker" "rmi"]+images, capture_output=True)
+					} elif constants.config['runtime'] == "podman" {
+						podman = ["podman"]
+						if constants.config['--root'] != "" {
+							podman += ["--root", constants.config['--root']]
+						}
+						images = cmd.check_output(podman+["images", "-f", "dangling=true", "-q"], text=True).split('\n')
+						data = cmd.run(podman+["rmi"]+images, capture_output=True)
+					}
+					warning("Images Deleted !", data)
+				}
+			}
+			case "PODMAN" {
+				podman_config()
+			}
+			case "TERMINAL" {
+				terminal_config(); window.close(); return False
+			}
+		}
+	}
+}
+
+# # image example:
+#
+# 'name', "example:latest"
+# 'terminal', False
+# 'x_screen', True
+# 'mount', False
+# 'src', "/file/in/the/host"
+# 'dst', "/dst/in/container"
+# 'use_args', False
+# 'args', "-p 8080:8080"
+# 'remove', True
+#
+
+def start_image(name) {
+	for item in constants.config['images'] {
+		if item['name'] == name {
+			img = item.copy(); break
+		}
+	}
+	
+	command = [constants.config['runtime']]
+	if constants.config['runtime'] == "podman" {
+		if constants.config['--root']: command += ['--root', constants.config['--root']]
+		if constants.config['--runroot']: command += ['--runroot', constants.config['--runroot']]
+		if constants.config['--runtime']: command += ['--runtime', constants.config['--runtime']]
+	}
+	command.append("run")
+	
+	if img['remove']: command.append("--rm")
+	if img['mount'] and img['src'] and img['dst']: command += ["--mount", "type=bind,source="+img['src']+",target="+img['dst']]
+	if img['use_args'] and img['args']: command += img['args'].split()
+
+	if img['x_screen'] {
+		command += [
+			"-v", "/tmp/.X11-unix/X%d:/tmp/.X11-unix/X%d" % (constants.config['new_X'], constants.config['new_X']),
+			"-e", "DISPLAY=:%d" % (constants.config['new_X'],)
+		]
+		try {
+		script = cmd.check_output(["which", constants.config['script_name']], text=True)
+		if script {
+			warning("Error, the name for script is already being used:", script)
+			return
+		}} except {
+			pass
+		}
+		script_path = os.path.expanduser('~') + "/bin/" + constants.config['script_name']
+		script = "#!/bin/bash\n"
+		script += "tty_name=$(tty)\n"
+		script += 'if [ "$tty_name" != "/dev/tty%d" ]; then\n' % (constants.config['new_tty'],)
+		script += '	echo "This is the wrong tty: $tty_name"\n'
+		script += '	exit\n'
+		script += 'fi\n'
+		script += 'Xorg :%d vt%d\n' % (constants.config['new_X'], constants.config['new_tty'])
+		script += 'chvt %d\n' % (constants.config['default_tty'],)
+		script += 'kill -9 $PPID'
+		with open(script_path, 'w') as file: file.write(script)
+		cmd.Popen(["chmod", "+x", script_path])
+		warning("Waiting user action:", 'Please open the tty%d and run "%s".' % (constants.config['new_tty'], constants.config['script_name']))
+		while True {
+			end = False
+			for p in cmd.check_output(["ps", "aux"], text=True).split('\n') {
+				p = p.split()
+				if len(p) < 11: continue
+				if p[10] == "/usr/lib/xorg/Xorg" and p[11] == ":"+str(constants.config['new_X']) and p[12] == "vt"+str(constants.config['new_tty']) {
+					end = True; break
+				}
+			}
+			if end {
+				break
+			}
+		}
+		os.environ['DISPLAY'] = ':' + str(constants.config['default_X'])
+		delay(0.2)
+		if img['terminal'] {
+			command += ["-it", name]
+			cmd.Popen([constants.config['terminal'], "--"] + command)
+			command = [constants.config['runtime']]
+			if constants.config['runtime'] == "podman" {
+				if constants.config['--root']: command += ['--root', constants.config['--root']]
+				if constants.config['--runroot']: command += ['--runroot', constants.config['--runroot']]
+				if constants.config['--runtime']: command += ['--runtime', constants.config['--runtime']]
+			}
+			command += ["ps", "-q", "--filter", "status=running"]
+			delay(1)
+			container = cmd.check_output(command, text=True).split("\n")[0]
+		} else {
+			command += ["-d", name]
+			container = cmd.run(command, capture_output=True)
+			if container.returncode != 0 {
+				warning("Error while trying to run image:", container)
+				return
+			}
+			warning("The container is running:", container)
+		}
+		loop = multiprocessing.Process(target=while_container, args=(container, script_path))
+		loop.start()
+	} else {
+		if img['xephyr'] {
+			try {
+			command += [
+				"-v", "/tmp/.X11-unix/X%d:/tmp/.X11-unix/X%d" % (constants.config['new_X'], constants.config['new_X']),
+				"-e", "DISPLAY=:%d" % (constants.config['new_X'],)
+			]
+			cmd.Popen(["Xephyr", ":" + str(constants.config['new_X'],), "-resizeable", '-ac'])
+			os.environ['DISPLAY'] = ':' + str(constants.config['default_X'])
+			delay(0.2)
+			} except Exception as e {
+				warning("Error while trying to open Xephyr:", e)
+				return
+			}
+		}
+		if img['terminal'] {
+			command += ["-it", name]
+			cmd.Popen([constants.config['terminal'], "--"] + command)
+		} else {
+			command += ["-d", name]
+			container = cmd.run(command, capture_output=True)
+			if container.returncode != 0 {
+				warning("Error while trying to run image:", container)
+				return
+			}
+			warning("The container is running:", container)
+		}
+	}
+}
+
+def image_config(image_name) {
+	image = None
+	if image_name is not None { # edit mode --------------------------------------------------
+		for item in constants.config['images'] {
+			if item['name'] == image_name {
+				image = item.copy(); break
+			}
+		}
+		layout = [
+			[Text("Editing: " + image_name)],
+			[Checkbox('Run o terminal ?', key="T", default=image['terminal'])],
+			[Checkbox('Create new x screen ?', key="X", default=image['x_screen'])],
+			[Checkbox('Create a Xephyr server ?', key="Y", default=image['xephyr'])],
+			[Checkbox('Delete container after run ?', key="D", default=image['remove'])],
+			[Checkbox('Mount folder ?', key="M", default=image['mount'])],
+			[Text("Path on host:"), Input(default_text=image['src'], key="SRC")],
+			[Text("Path on container:"), Input(default_text=image['dst'], key="DST")],
+			[Checkbox('Extra arguments ?', key="A", default=image['use_args'])],
+			[Text("Arguments:"), Input(default_text=image['args'], key="ARG")],
+			[Button("Change"), Button("Cancell")],
+			[Button("Delete image")]
+		]
+	} else { # add new mode ------------------------------------------------------------------
+		element = Input(default_text="No images found, insert name here.", key="NAME")
+		if constants.config['runtime'] == "podman" {
+			podman = ["podman"]
+			if constants.config['--root'] != "": podman += ["--root", constants.config['--root']]
+			try {
+				command_result = cmd.check_output(podman+["images", "-f", "dangling=false", "--format=json"], text=True)
+				images = [image['Names'][0].split('/')[-1] for image in json.loads(command_result)]
+				element = OptionMenu(images, default_value=images[0], key="NAME")
+			} except Exception as e {
+				warning("Error while searching images:", e)
+			}
+		}
+		layout = [
+			[Text("Image name:"), element],
+			[Checkbox('Run o terminal ?', key="T")],
+			[Checkbox('Create new x screen ?', key="X")],
+			[Checkbox('Create a Xephyr server ?', key="Y")],
+			[Checkbox('Delete container after run ?', key="D")],
+			[Checkbox('Mount folder ?', key="M")],
+			[Text("Path on host:"), Input(default_text="/full/path/from/host", key="SRC")],
+			[Text("Path on container:"), Input(default_text="/full/path/to/container", key="DST")],
+			[Checkbox('Extra arguments ?', key="A")],
+			[Text("Arguments:"), Input(default_text="Extra arguments to run.", key="ARG")],
+			[Button("Add"), Button("Cancell")]
+		]
+	} # --------------------------------------------------------------------------------------
+	window = gui.Window('Add Image:', layout, resizable=True)
+	while True {
+		event, values = window.read()
+		if event == "Cancell" or event == gui.WIN_CLOSED {
+			warning("Cancelled.", "No changes made.")
+			break
+		}
+		if event == "Delete image" {
+			if ask("Delete this configuration ?") {
+				constants.config['images'].remove(image)
+				if save(): break
+				constants.config['images'].append(image)
+			}
+		}
+		if event == "Change" or event == "Add" {
+			img = dict([('name', values['NAME'])]) if event == "Add" else image.copy()
+
+			img['terminal'] = values['T']
+			img['x_screen'] = values['X']
+			img['remove'] = values['D']
+			img['mount'] = values['M']
+			img['src'] = values['SRC']
+			img['dst'] = values['DST']
+			img['use_args'] = values['A']
+			img['args'] = values['ARG']
+			img['xephyr'] = values['Y']
+			
+			if event == "Change": constants.config['images'].remove(image)
+			constants.config['images'].append(img)
+			if save(): break
+			constants.config['images'].remove(img)
+			if event == "Change": constants.config['images'].append(image)
+		}
+	}
+	window.close()
+}
+
+def main() {
+	lines = [[Button("⚙️ General Configurations", key="CONFIGS"), Button("➕ Add Image", key="ADDIMAGE"), Button("🖥️ Container Tracker.", key="TRACKER")]]
+	if constants.config['images'] {
+		lines += [[Button("⚙️", key=c['name']+"C"), Button("▶️", key=c['name']+">"), Text(c['name'])] for c in constants.config['images']]
+	} else {
+		lines.append([Text("Add more images !")])
+	}
+	window = Window('Containers:', lines, resizable=True)
+	while True {
+		event, values = window.read()
+		if event is None: return True
+		match event {
+			case "CONFIGS" {
+				if configurations() {
+					window.close(); return False
+				}
+			}
+			case "ADDIMAGE" {
+				image_config(None); window.close(); return False
+			}
+			case "TRACKER" {
+				cmd.Popen(["bython", "tracker.by"])
+			}
+			case _ {
+				if event[-1] == ">" {
+					start_image(event[:-1])
+				} else {
+					image_config(event[:-1]); window.close(); return False
+				}
+			}
+		}
+	}
+}
+
+# ------------RUN------------
+
+try {
+	if not os.path.exists(constants.config_file): save()
+	with open(constants.config_file, 'r') as file {
+		data = json.load(file)
+		if data: constants.config = data
+		gui.theme(constants.config['theme'])
+	}
+} except Exception as e {
+	warning("Error loading configurations:", e)
+	print(e); exit()
+}
+
+while True {
+	if main() {
+		break
+	}
+}
