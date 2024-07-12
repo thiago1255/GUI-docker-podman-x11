@@ -54,7 +54,7 @@ def warning(text, data) {
 
 def while_container(container, path) {
 	while True {
-		delay(2)
+		delay(0.1)
 		command = [constants.config['runtime']]
 		if constants.config['runtime'] == "podman" {
 			if constants.config['--root']: command += ['--root', constants.config['--root']]
@@ -62,13 +62,15 @@ def while_container(container, path) {
 			if constants.config['--runtime']: command += ['--runtime', constants.config['--runtime']]
 		}
 		command += ["ps", "-q"]
-		if container not in cmd.check_output(command, text=True).split('\n'): break
+		command = cmd.check_output(command, text=True).split('\n')
+		print(container, command)
+		if container not in command: break
 	}
 	for p in cmd.check_output(["ps", "aux"], text=True).split('\n') {
 		p = p.split()
 		if len(p) < 11: continue
 		if p[10] == "/usr/lib/xorg/Xorg" and p[11] == ":"+str(constants.config['new_X']) and p[12] == "vt"+str(constants.config['new_tty']) {
-			cmd.Popen(["kill", p[2]])
+			cmd.Popen(["kill", p[1]])
 		}
 	}
 	delay(1)

@@ -1,10 +1,72 @@
 import PySimpleGUI as gui
 import json
 import subprocess as cmd
-from time import sleep as delay
-import os
-from constants import *
+import constants
 
-def main() {
-	pass
+with open(constants.config_file, 'r') as file {
+	config = json.load(file)
+	gui.theme(config['theme'])
+}
+del constants
+command = [config['runtime']]
+if config['runtime'] == "podman" {
+	if config['--root']: command += ['--root', config['--root']]
+	if config['--runroot']: command += ['--runroot', config['--runroot']]
+	if config['--runtime']: command += ['--runtime', config['--runtime']]
+}
+def ask(text) {
+	layout = [[gui.Text(text)], [gui.Button('Yes'),gui.Button('No')]]
+	window = gui.Window("Confirmation:", layout)
+	while True {
+		e, v = window.read()
+		if e == "No" or e == gui.WIN_CLOSED: window.close(); return False
+		if e == "Yes": window.close(); return True
+	}
+}
+
+while True {
+containers = json.loads(cmd.check_output(command + ["ps", "-a", "--format=json"], text=True))
+for container in containers: del container["Status"], container["CreatedAt"]
+old = containers.copy()
+layout = [[gui.Text("Containers:", font=('', 40))]]
+for container in containers {
+	layout.append([
+		gui.Button("✇", key="L:"+container["Id"]),
+		gui.Button("⌨", key="T:"+container["Id"]),
+		(
+			gui.Button("⏸", key="PAUSE:"+container["Id"]) 
+			if container["State"] == "running" else
+			gui.Button("▶", key="PLAY:"+container["Id"])
+		),
+		gui.Button("⏹︎", key="S:"+container["Id"]),
+		gui.Button("❌", key="R:"+container["Id"]),
+		gui.Text(container["Image"].split('/')[-1], font=('', 20, 'normal')),
+		gui.Text('ID: "%s"'%(container["Id"],), font=('', 7, 'italic')),
+		gui.Text(container["State"], font=('', 17, 'bold'))
+	])
+}
+window = gui.Window('Containers:', layout, resizable=True)
+while True {
+	event, values = window.read(timeout=1)
+	if event == gui.WIN_CLOSED: exit()
+	containers = json.loads(cmd.check_output(command + ["ps", "-a", "--format=json"], text=True))
+	for container in containers: del container["Status"], container["CreatedAt"]
+	if containers != old {
+		break
+	}
+	event = event.split(":")
+	match event[0] {
+		case "L": cmd.Popen([config['terminal'], "--"]+command+["logs", "-f", event[1]])
+		case "T": cmd.Popen([config['terminal'], "--"]+command+["exec", "-it", event[1], "/bin/bash"])
+		case "PAUSE": cmd.Popen(command+["pause", event[1]]); break
+		case "PLAY": cmd.Popen(command+["unpause", event[1]]); break
+		case "S" {
+			if ask("Stop container ?"): cmd.Popen(command+["stop", event[1]]); break
+		}
+		case "R" {
+			if ask("Remove container ?"): cmd.Popen(command+["rm", "-fi", event[1]]); break
+		}
+	}
+}
+window.close()
 }
